@@ -1,5 +1,5 @@
 const { Telegraf, Markup } = require('telegraf');
-const axios = require('axios'); // For API requests
+const axios = require('axios');
 const tesseract = require('tesseract.js'); // For OCR (text extraction from images)
 
 const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc'; 
@@ -16,7 +16,6 @@ const languages = [
 
 const userLanguage = {};
 
-// Start command
 bot.start((ctx) => {
   const username = ctx.message.from.username || ctx.message.from.first_name;
   ctx.reply(
@@ -24,7 +23,7 @@ bot.start((ctx) => {
   );
 });
 
-// Begin command
+
 bot.command('begin', (ctx) => {
   ctx.reply(
     "Okay, let's start from here, choose your language:",

@@ -1,0 +1,13 @@
+{
+  "1446675700": {
+    "favoriteLanguage": "so"
+  },
+  "dependencies": {
+    "@google-cloud/translate": "^8.5.0",
+    "@vitalets/google-translate-api": "^9.2.0",
+    "axios": "^1.7.9",
+    "node-telegram-bot-api": "^0.66.0",
+    "telegraf": "^4.16.3",
+    "tesseract.js": "^5.1.1"
+  }
+}
