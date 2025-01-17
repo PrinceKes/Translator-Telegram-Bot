@@ -4,7 +4,7 @@ const tesseract = require('tesseract.js');
 
 const fs = require('fs');
 const path = require('path');
-const userProfileFile = path.join(__dirname, 'package.json');
+const userProfileFile = path.join(__dirname, 'users.json');
 
 const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc';
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -114,6 +114,7 @@ if (!fs.existsSync(userProfileFile)) {
     fs.writeFileSync(userProfileFile, JSON.stringify({}, null, 2));
   }
 
+
   // /setfavorite Command
 bot.onText(/\/setfavorite/, (msg) => {
     const chatId = msg.chat.id;
@@ -131,24 +132,40 @@ bot.onText(/\/setfavorite/, (msg) => {
           chatId,
           `Okay, to set your favorite languages, send your favorite language in short words:\n\n` +
           `Afar as "aa"\nSomali as "so"\nArabic as "ar"\nAmharic as "am"\nEnglish as "en"\nOromo as "om"\n\n` +
-          `Only send the short letters of the language.`
+          `Only send the short letters of the language. You can send more than one by separating them with commas (e.g., "so, ar, en").`
         );
         bot.once('message', (langResponse) => {
-          const favoriteLanguage = langResponse.text.toLowerCase();
+          const languages = langResponse.text.toLowerCase().split(',').map(lang => lang.trim());
           const validLanguages = ['aa', 'so', 'ar', 'am', 'en', 'om'];
   
-          if (validLanguages.includes(favoriteLanguage)) {
-            const userId = response.from.id;
-  
-            const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
-            profiles[userId] = { favoriteLanguage };
-  
-            fs.writeFileSync(userProfileFile, JSON.stringify(profiles, null, 2));
-  
-            bot.sendMessage(chatId, `Your favorite language '${favoriteLanguage}' has been saved!`);
-          } else {
-            bot.sendMessage(chatId, `Invalid language code. Please try again.`);
+          const filteredLanguages = languages.filter(lang => validLanguages.includes(lang));
+          if (filteredLanguages.length === 0) {
+            bot.sendMessage(chatId, `No valid language codes were provided. Please try again.`);
+            return;
           }
+  
+          const userId = response.from.id;
+  
+          // Load existing profiles
+          const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
+  
+          // Add languages to the user's profile
+          if (!profiles[userId]) {
+            profiles[userId] = { favoriteLanguages: [] };
+          }
+  
+          profiles[userId].favoriteLanguages.push(...filteredLanguages);
+  
+          // Remove duplicates
+          profiles[userId].favoriteLanguages = [...new Set(profiles[userId].favoriteLanguages)];
+  
+          // Save back to file
+          fs.writeFileSync(userProfileFile, JSON.stringify(profiles, null, 2));
+  
+          bot.sendMessage(
+            chatId,
+            `Your favorite languages have been saved: ${profiles[userId].favoriteLanguages.join(', ')}`
+          );
         });
       } else {
         bot.sendMessage(chatId, `Please respond with either "Yes" or "No".`);
@@ -163,12 +180,72 @@ bot.onText(/\/setfavorite/, (msg) => {
   
     const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
   
-    if (profiles[userId] && profiles[userId].favoriteLanguage) {
-      bot.sendMessage(chatId, `Your favorite language is: '${profiles[userId].favoriteLanguage}'`);
+    if (profiles[userId] && profiles[userId].favoriteLanguages && profiles[userId].favoriteLanguages.length > 0) {
+      bot.sendMessage(
+        chatId,
+        `Your favorite languages are: ${profiles[userId].favoriteLanguages.join(', ')}`
+      );
     } else {
-      bot.sendMessage(chatId, `You haven't set a favorite language yet. Use /setfavorite to set one.`);
+      bot.sendMessage(chatId, `You haven't set any favorite languages yet. Use /setfavorite to set one.`);
     }
   });
+
+  
+  // /setfavorite Command
+// bot.onText(/\/setfavorite/, (msg) => {
+//     const chatId = msg.chat.id;
+  
+//     bot.sendMessage(chatId, 'Would you like to set your favorite languages? Yes or No?');
+//     bot.once('message', (response) => {
+//       const userResponse = response.text.toLowerCase();
+//       if (userResponse === 'no') {
+//         bot.sendMessage(
+//           chatId,
+//           `Well, that's not a problem, let me know next time you want to translate. Thank you 😊`
+//         );
+//       } else if (userResponse === 'yes') {
+//         bot.sendMessage(
+//           chatId,
+//           `Okay, to set your favorite languages, send your favorite language in short words:\n\n` +
+//           `Afar as "aa"\nSomali as "so"\nArabic as "ar"\nAmharic as "am"\nEnglish as "en"\nOromo as "om"\n\n` +
+//           `Only send the short letters of the language.`
+//         );
+//         bot.once('message', (langResponse) => {
+//           const favoriteLanguage = langResponse.text.toLowerCase();
+//           const validLanguages = ['aa', 'so', 'ar', 'am', 'en', 'om'];
+  
+//           if (validLanguages.includes(favoriteLanguage)) {
+//             const userId = response.from.id;
+  
+//             const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
+//             profiles[userId] = { favoriteLanguage };
+  
+//             fs.writeFileSync(userProfileFile, JSON.stringify(profiles, null, 2));
+  
+//             bot.sendMessage(chatId, `Your favorite language '${favoriteLanguage}' has been saved!`);
+//           } else {
+//             bot.sendMessage(chatId, `Invalid language code. Please try again.`);
+//           }
+//         });
+//       } else {
+//         bot.sendMessage(chatId, `Please respond with either "Yes" or "No".`);
+//       }
+//     });
+//   });
+  
+//   // /myfavorite Command
+//   bot.onText(/\/myfavorite/, (msg) => {
+//     const chatId = msg.chat.id;
+//     const userId = msg.from.id;
+  
+//     const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
+  
+//     if (profiles[userId] && profiles[userId].favoriteLanguage) {
+//       bot.sendMessage(chatId, `Your favorite language is: '${profiles[userId].favoriteLanguage}'`);
+//     } else {
+//       bot.sendMessage(chatId, `You haven't set a favorite language yet. Use /setfavorite to set one.`);
+//     }
+//   });
 
 
   // Handle photo text extraction (/photo_text command)

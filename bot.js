@@ -1,410 +1,224 @@
-const { Telegraf, Markup } = require('telegraf');
+const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
-const tesseract = require('tesseract.js'); // For OCR (text extraction from images)
+const tesseract = require('tesseract.js');
 
-const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc'; 
-const bot = new Telegraf(BOT_TOKEN);
+const fs = require('fs');
+const path = require('path');
+const userProfileFile = path.join(__dirname, 'users.json');
 
-const languages = [
-  { name: 'Amharic', code: 'am' },
-  { name: 'English', code: 'en' },
-  { name: 'Oromifa', code: 'om' },
-  { name: 'Arabic', code: 'ar' },
-  { name: 'Somali', code: 'so' },
-  { name: 'Afar', code: 'aa' },
-];
+const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc';
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-const userLanguage = {};
+const translationAPI = 'http://localhost:8000/translate';
 
-bot.start((ctx) => {
-  const username = ctx.message.from.username || ctx.message.from.first_name;
-  ctx.reply(
-    `Hey @${username}, it's so wonderful to have you in "Neb Translator" Bot! Here you can translate your dialect language to another country's language. Use /begin to get started.`
+const languageCodeMap = {
+  Amharic: 'am',
+  English: 'en',
+  Oromifa: 'om',
+  Arabic: 'ar',
+  Somali: 'so',
+  Afar: 'aa',
+};
+
+let userSelections = {}; 
+
+const createLanguageButtons = () => {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Amharic', callback_data: 'Amharic' }, { text: 'English', callback_data: 'English' }],
+        [{ text: 'Oromifa', callback_data: 'Oromifa' }, { text: 'Arabic', callback_data: 'Arabic' }],
+        [{ text: 'Somali', callback_data: 'Somali' }, { text: 'Afar', callback_data: 'Afar' }],
+      ],
+    },
+  };
+};
+
+// /start command
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  const username = msg.from.username;
+  bot.sendMessage(
+    chatId,
+    `Hey @${username}, My name is NebTransact developed by StrongNationDev. I can translate your language to another language of your choice. Send /nowstart to begin!`
   );
 });
 
-
-bot.command('begin', (ctx) => {
-  ctx.reply(
-    "Okay, let's start from here, choose your language:",
-    Markup.inlineKeyboard(
-      languages.map((lang) => Markup.button.callback(lang.name, `set_language_${lang.code}`))
-    )
+// /nowstart command
+bot.onText(/\/nowstart/, (msg) => {
+  const chatId = msg.chat.id;
+  const username = msg.from.username;
+  bot.sendMessage(
+    chatId,
+    `Okay, @${username}, please what language do you want to tell me to translate for you?`,
+    createLanguageButtons()
   );
 });
 
-// Set user language
-languages.forEach((lang) => {
-  bot.action(`set_language_${lang.code}`, (ctx) => {
-    userLanguage[ctx.from.id] = lang.code; // Store user's language
-    ctx.reply(`You have set your language to ${lang.name}. Now send any message in your language.`);
-    ctx.answerCbQuery();
-  });
-});
+// Handle language selection
+bot.on('callback_query', (query) => {
+  const chatId = query.message.chat.id;
+  const userId = query.from.id;
+  const language = query.data;
 
-// Handle text translation
-bot.on('text', async (ctx) => {
-  const userLang = userLanguage[ctx.from.id];
+  if (!userSelections[userId]) userSelections[userId] = {};
 
-  if (!userLang) {
-    ctx.reply('Please use /begin to set your language first.');
-    return;
-  }
+  if (!userSelections[userId].fromLanguage) {
+    userSelections[userId].fromLanguage = languageCodeMap[language] || language;
+    bot.sendMessage(chatId, `You have selected ${language}. Now send a message in ${language}.`);
+  } else if (!userSelections[userId].toLanguage) {
+    userSelections[userId].toLanguage = languageCodeMap[language] || language;
 
-  const userMessage = ctx.message.text;
-  ctx.reply(
-    'Choose the language you want to translate to:',
-    Markup.inlineKeyboard(
-      languages.map((lang) => Markup.button.callback(lang.name, `translate_to_${lang.code}_${userMessage}`))
-    )
-  );
-});
-
-// Perform translation
-bot.action(/translate_to_(.+)/, async (ctx) => {
-  const data = ctx.match[1];
-  const [targetLang, ...textArray] = data.split('_'); // Handle multiple words
-  const textToTranslate = textArray.join('_'); // Rejoin message
-  const userLang = userLanguage[ctx.from.id];
-
-  try {
-    const response = await axios.get('https://api.mymemory.translated.net/get', {
-      params: {
-        q: textToTranslate,
-        langpair: `${userLang}|${targetLang}`,
-      },
-    });
-
-    if (response.data.responseData && response.data.responseData.translatedText) {
-      const translatedText = response.data.responseData.translatedText;
-
-      // Find the target language name
-      const targetLangObj = languages.find((lang) => lang.code === targetLang);
-      const targetLangName = targetLangObj ? targetLangObj.name : targetLang;
-
-      ctx.reply(`${targetLangName}: "${translatedText}"`);
-    } else {
-      ctx.reply('Sorry, the translation could not be processed. Please try again.');
-    }
-  } catch (error) {
-    console.error('Error during translation:', error); // Log error for debugging
-    ctx.reply('Sorry, an error occurred while translating. Please try again.');
-  }
-  ctx.answerCbQuery();
-});
-
-// Photo translation command
-bot.command('phototranslate', (ctx) => {
-  ctx.reply('Send a photo that has text you would like to translate.');
-});
-
-// Handle photo uploads
-bot.on('photo', async (ctx) => {
-  const photo = ctx.message.photo.pop(); // Get the highest resolution photo
-  const fileId = photo.file_id;
-
-  try {
-    const fileLink = await ctx.telegram.getFileLink(fileId);
-
-    ctx.reply('Processing the image...');
-
-    // Extract text from the image
-    tesseract
-      .recognize(fileLink.href, 'eng') // Specify OCR language
-      .then(({ data: { text } }) => {
-        if (text.trim()) {
-          ctx.reply(
-            `Extracted text: "${text}". Choose the language you want to translate to:`,
-            Markup.inlineKeyboard(
-              languages.map((lang) => Markup.button.callback(lang.name, `translate_photo_${lang.code}_${encodeURIComponent(text)}`))
-            )
-          );
-        } else {
-          ctx.reply('No text detected in the image. Please try again with a clearer image.');
-        }
+    const { fromLanguage, message } = userSelections[userId];
+    axios
+      .post(translationAPI, {
+        from: fromLanguage,
+        to: userSelections[userId].toLanguage,
+        text: message,
       })
-      .catch((error) => {
-        console.error('Error during OCR:', error); // Log error for debugging
-        ctx.reply('An error occurred while processing the image. Please try again.');
+      .then((response) => {
+        const translatedText = response.data.translatedText;
+        bot.sendMessage(
+          chatId,
+          `Your original message in ${language}: '${message}' is now translated to ${language}.`
+        );
+        bot.sendMessage(chatId, `Your translated message is: '${translatedText}'`);
+        delete userSelections[userId];
+      })
+      .catch((err) => {
+        bot.sendMessage(chatId, 'Failed to translate the message. Please try again later.');
+        console.error(err);
       });
-  } catch (error) {
-    console.error('Error fetching photo:', error); // Log error for debugging
-    ctx.reply('An error occurred while fetching the photo. Please try again.');
   }
 });
 
-// Handle translation of extracted photo text
-bot.action(/translate_photo_(.+)/, async (ctx) => {
-  const data = ctx.match[1];
-  const [targetLang, encodedText] = data.split('_', 2);
-  const textToTranslate = decodeURIComponent(encodedText);
+// Handle user message input
+bot.on('message', (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (userSelections[userId] && userSelections[userId].fromLanguage && !userSelections[userId].message) {
+    userSelections[userId].message = msg.text;
+    bot.sendMessage(
+      chatId,
+      'Message received. Now select the language you want to translate your message to:',
+      createLanguageButtons()
+    );
+  }
+});
+
+
+// /setfavorite command
+// Ensure the file exists
+if (!fs.existsSync(userProfileFile)) {
+    fs.writeFileSync(userProfileFile, JSON.stringify({}, null, 2));
+  }
+
+
+  // /setfavorite Command
+bot.onText(/\/setfavorite/, (msg) => {
+    const chatId = msg.chat.id;
+  
+    bot.sendMessage(chatId, 'Would you like to set your favorite languages? Yes or No?');
+    bot.once('message', (response) => {
+      const userResponse = response.text.toLowerCase();
+      if (userResponse === 'no') {
+        bot.sendMessage(
+          chatId,
+          `Well, that's not a problem, let me know next time you want to translate. Thank you 😊`
+        );
+      } else if (userResponse === 'yes') {
+        bot.sendMessage(
+          chatId,
+          `Okay, to set your favorite languages, send your favorite language in short words:\n\n` +
+          `Afar as "aa"\nSomali as "so"\nArabic as "ar"\nAmharic as "am"\nEnglish as "en"\nOromo as "om"\n\n` +
+          `Only send the short letters of the language. You can send more than one by separating them with commas (e.g., "so, ar, en").`
+        );
+        bot.once('message', (langResponse) => {
+          const languages = langResponse.text.toLowerCase().split(',').map(lang => lang.trim());
+          const validLanguages = ['aa', 'so', 'ar', 'am', 'en', 'om'];
+  
+          const filteredLanguages = languages.filter(lang => validLanguages.includes(lang));
+          if (filteredLanguages.length === 0) {
+            bot.sendMessage(chatId, `No valid language codes were provided. Please try again.`);
+            return;
+          }
+  
+          const userId = response.from.id;
+  
+          // Load existing profiles
+          const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
+  
+          // Add languages to the user's profile
+          if (!profiles[userId]) {
+            profiles[userId] = { favoriteLanguages: [] };
+          }
+  
+          profiles[userId].favoriteLanguages.push(...filteredLanguages);
+  
+          // Remove duplicates
+          profiles[userId].favoriteLanguages = [...new Set(profiles[userId].favoriteLanguages)];
+  
+          // Save back to file
+          fs.writeFileSync(userProfileFile, JSON.stringify(profiles, null, 2));
+  
+          bot.sendMessage(
+            chatId,
+            `Your favorite languages have been saved: ${profiles[userId].favoriteLanguages.join(', ')}`
+          );
+        });
+      } else {
+        bot.sendMessage(chatId, `Please respond with either "Yes" or "No".`);
+      }
+    });
+  });
+  
+  // /myfavorite Command
+  bot.onText(/\/myfavorite/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+  
+    const profiles = JSON.parse(fs.readFileSync(userProfileFile, 'utf8'));
+  
+    if (profiles[userId] && profiles[userId].favoriteLanguages && profiles[userId].favoriteLanguages.length > 0) {
+      bot.sendMessage(
+        chatId,
+        `Your favorite languages are: ${profiles[userId].favoriteLanguages.join(', ')}`
+      );
+    } else {
+      bot.sendMessage(chatId, `You haven't set any favorite languages yet. Use /setfavorite to set one.`);
+    }
+  });
+
+  
+// Handle photo text extraction (/photo_text command)
+bot.onText(/\/photo_text/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(
+    chatId,
+    'The command you just used can extract text from photos and send it back to you, which you can then translate afterwards. Now send a photo in JPG or PNG format.'
+  );
+});
+
+// Handle photos sent by users
+bot.on('photo', async (msg) => {
+  const chatId = msg.chat.id;
+  const fileId = msg.photo[msg.photo.length - 1].file_id;
 
   try {
-    const response = await axios.get('https://api.mymemory.translated.net/get', {
-      params: {
-        q: textToTranslate,
-        langpair: `en|${targetLang}`, // Assuming extracted text is in English
-      },
-    });
+    const fileLink = await bot.getFileLink(fileId);
 
-    if (response.data.responseData && response.data.responseData.translatedText) {
-      const translatedText = response.data.responseData.translatedText;
+    const { data: { text } } = await tesseract.recognize(fileLink, 'eng');
 
-      // Find the target language name
-      const targetLangObj = languages.find((lang) => lang.code === targetLang);
-      const targetLangName = targetLangObj ? targetLangObj.name : targetLang;
-
-      ctx.reply(`${targetLangName}: "${translatedText}"`);
+    if (text.trim()) {
+      bot.sendMessage(chatId, `The text in the photo is:\n\n${text}`);
+      bot.sendMessage(chatId, 'You can use the /nowstart command to translate that message.');
     } else {
-      ctx.reply('Sorry, the translation could not be processed. Please try again.');
+      bot.sendMessage(chatId, 'Could not detect any text in the photo. Please try with a clearer image.');
     }
-  } catch (error) {
-    console.error('Error during translation:', error); // Log error for debugging
-    ctx.reply('Sorry, an error occurred while translating. Please try again.');
+  } catch (err) {
+    bot.sendMessage(chatId, 'Failed to extract text from the photo. Please try again.');
+    console.error(err);
   }
-  ctx.answerCbQuery();
 });
 
-// Launch the bot
-bot.launch();
-
-
-
-
-// const { Telegraf, Markup } = require('telegraf');
-// const axios = require('axios');  // Import axios for making API requests
-
-// const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc'; 
-// const bot = new Telegraf(BOT_TOKEN);
-
-// const languages = [
-//   { name: 'Amharic', code: 'am' },
-//   { name: 'English', code: 'en' },
-//   { name: 'Oromifa', code: 'om' },
-//   { name: 'Arabic', code: 'ar' },
-//   { name: 'Somali', code: 'so' },
-//   { name: 'Afar', code: 'aa' }
-// ];
-
-// const userLanguage = {};
-
-// bot.start((ctx) => {
-//   const username = ctx.message.from.username || ctx.message.from.first_name;
-//   ctx.reply(
-//     `Hey @${username}, it's so wonderful to have you in "Neb Translator" Bot! Here you can translate your dialect language to another country's language. Use /begin to get started.`
-//   );
-// });
-
-// bot.command('begin', (ctx) => {
-//   ctx.reply(
-//     "Okay, let's start from here, choose your language:",
-//     Markup.inlineKeyboard(
-//       languages.map((lang) => Markup.button.callback(lang.name, `set_language_${lang.code}`))
-//     )
-//   );
-// });
-
-// languages.forEach((lang) => {
-//   bot.action(`set_language_${lang.code}`, (ctx) => {
-//     userLanguage[ctx.from.id] = lang.code; // Store the language code
-//     ctx.reply(`Okay, you have set your language to ${lang.name}. Now send any message in your language.`);
-//     ctx.answerCbQuery();
-//   });
-// });
-
-// bot.on('text', async (ctx) => {
-//   const userLang = userLanguage[ctx.from.id];
-
-//   if (!userLang) {
-//     ctx.reply('Please use /begin to set your language first.');
-//     return;
-//   }
-
-//   const userMessage = ctx.message.text;
-//   ctx.reply(
-//     'Choose the language you want to translate to:',
-//     Markup.inlineKeyboard(
-//       languages.map((lang) => Markup.button.callback(lang.name, `translate_to_${lang.code}_${userMessage}`))
-//     )
-//   );
-// });
-
-// bot.action(/translate_to_(.+)/, async (ctx) => {
-//   const data = ctx.match[1];
-//   const [targetLang, ...textArray] = data.split('_'); // Handle multiple words
-//   const textToTranslate = textArray.join('_'); // Rejoin message
-//   const userLang = userLanguage[ctx.from.id];
-
-//   try {
-//     const response = await axios.get('https://api.mymemory.translated.net/get', {
-//       params: {
-//         q: textToTranslate,
-//         langpair: `${userLang}|${targetLang}`,
-//       },
-//     });
-
-//     console.log(`Translation requested: Source: ${userLang}, Target: ${targetLang}, Text: ${textToTranslate}`);
-//     console.log('API Response:', response.data);  // Log the complete response for debugging
-
-//     if (response.data.responseData && response.data.responseData.translatedText) {
-//       const translatedText = response.data.responseData.translatedText;
-
-//       // Find the language name for the target language
-//       const targetLangObj = languages.find((lang) => lang.code === targetLang);
-//       const targetLangName = targetLangObj ? targetLangObj.name : targetLang;
-
-//       ctx.reply(`${targetLangName}: "${translatedText}"`);
-//     } else {
-//       ctx.reply('Sorry, the translation could not be processed. Please try again.');
-//     }
-//   } catch (error) {
-//     console.error('Error during translation:', error);  // Log the error for debugging
-//     ctx.reply('Sorry, an error occurred while translating. Please try again.');
-//   }
-//   ctx.answerCbQuery();
-// });
-
-// bot.launch();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// const { Telegraf, Markup } = require('telegraf');
-// const translate = require('@vitalets/google-translate-api');
-// const tesseract = require('tesseract.js');
-
-// const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc';
-
-// const bot = new Telegraf(BOT_TOKEN);
-
-// const languages = ['Amharic', 'English', 'Oromifa', 'Arabic', 'Somali', 'Afar'];
-
-// const userLanguage = {};
-
-// bot.start((ctx) => {
-//   const username = ctx.message.from.username || ctx.message.from.first_name;
-//   ctx.reply(
-//     `Hey @${username}, it's so wonderful to have you in "Neb Translator" Bot! Here you can translate your dialect language to another country's language. Use /begin to get started.`
-//   );
-// });
-
-// bot.command('begin', (ctx) => {
-//   ctx.reply(
-//     "Okay, let's start from here, choose your language:",
-//     Markup.inlineKeyboard(
-//       languages.map((lang) => Markup.button.callback(lang, `set_language_${lang}`))
-//     )
-//   );
-// });
-
-// languages.forEach((lang) => {
-//   bot.action(`set_language_${lang}`, (ctx) => {
-//     userLanguage[ctx.from.id] = lang;
-//     ctx.reply(`Okay, you have set your language to ${lang}. Now send any message in your language.`);
-//     ctx.answerCbQuery();
-//   });
-// });
-
-// bot.on('text', async (ctx) => {
-//   const userLang = userLanguage[ctx.from.id];
-
-//   if (!userLang) {
-//     ctx.reply('Please use /begin to set your language first.');
-//     return;
-//   }
-
-//   const userMessage = ctx.message.text;
-//   ctx.reply(
-//     'Choose the language you want to translate to:',
-//     Markup.inlineKeyboard(
-//       languages.map((lang) => Markup.button.callback(lang, `translate_to_${lang}_${userMessage}`))
-//     )
-//   );
-// });
-
-// languages.forEach((lang) => {
-//   bot.action(/translate_to_(.+)/, async (ctx) => {
-//     const data = ctx.match[1];
-//     const [targetLang, textToTranslate] = data.split('_', 2);
-//     const userLang = userLanguage[ctx.from.id];
-
-//     try {
-//       const result = await translate(textToTranslate, { from: userLang, to: targetLang.toLowerCase() });
-//       ctx.reply(`${targetLang}: "${result.text}"`);
-//     } catch (error) {
-//       ctx.reply('Sorry, an error occurred while translating. Please try again.');
-//     }
-//     ctx.answerCbQuery();
-//   });
-// });
-
-// bot.command('phototranslate', (ctx) => {
-//   ctx.reply('Send a photo that has text that you would like to translate.');
-// });
-
-// bot.on('photo', async (ctx) => {
-//   const photo = ctx.message.photo.pop();
-//   const fileId = photo.file_id;
-
-//   const fileLink = await ctx.telegram.getFileLink(fileId);
-
-//   ctx.reply('Processing the image...');
-
-//   tesseract
-//     .recognize(fileLink.href, 'eng')
-//     .then(({ data: { text } }) => {
-//       if (text.trim()) {
-//         ctx.reply(
-//           `Extracted text: "${text}". Choose the language you want to translate to:`,
-//           Markup.inlineKeyboard(
-//             languages.map((lang) => Markup.button.callback(lang, `translate_photo_${lang}_${text}`))
-//           )
-//         );
-//       } else {
-//         ctx.reply('No text detected in the image. Please try again with a clearer image.');
-//       }
-//     })
-//     .catch((error) => {
-//       ctx.reply('An error occurred while processing the image. Please try again.');
-//       console.error(error);
-//     });
-// });
-
-// languages.forEach((lang) => {
-//   bot.action(/translate_photo_(.+)/, async (ctx) => {
-//     const data = ctx.match[1];
-//     const [targetLang, textToTranslate] = data.split('_', 2);
-
-//     try {
-//       const result = await translate(textToTranslate, { to: targetLang.toLowerCase() });
-//       ctx.reply(`${targetLang}: "${result.text}"`);
-//     } catch (error) {
-//       ctx.reply('Sorry, an error occurred while translating. Please try again.');
-//     }
-//     ctx.answerCbQuery();
-//   });
-// });
-
-// bot.launch().then(() => {
-//   console.log('Neb Translator Bot is running!');
-// });
-
-// // Graceful shutdown
-// process.once('SIGINT', () => bot.stop('SIGINT'));
-// process.once('SIGTERM', () => bot.stop('SIGTERM'));

@@ -1,7 +1,4 @@
 {
-  "1446675700": {
-    "favoriteLanguage": "so"
-  },
   "dependencies": {
     "@google-cloud/translate": "^8.5.0",
     "@vitalets/google-translate-api": "^9.2.0",
