@@ -1,37 +1,70 @@
+require('dotenv').config();
+const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const tesseract = require('tesseract.js');
-
-const fs = require('fs');
 const path = require('path');
-const userProfileFile = path.join(__dirname, 'users.json');
 
-const BOT_TOKEN = '7373279424:AAF8FeR1hutyA9-AMgbq710FSV3HWcjxrpc';
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  throw new Error('BOT_TOKEN is not defined. Please set it in the .env file.');
+}
+
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-const translationAPI = 'http://localhost:8000/translate';
+const translationAPI = 'https://translator-api-2l1a.onrender.com/translate';
 
 const languageCodeMap = {
   Amharic: 'am',
   English: 'en',
   Oromifa: 'om',
   Arabic: 'ar',
+  Tigrinya: 'ti',
   Somali: 'so',
   Afar: 'aa',
 };
 
-let userSelections = {}; 
 
-const createLanguageButtons = () => {
-  return {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: 'Amharic', callback_data: 'Amharic' }, { text: 'English', callback_data: 'English' }],
-        [{ text: 'Oromifa', callback_data: 'Oromifa' }, { text: 'Arabic', callback_data: 'Arabic' }],
-        [{ text: 'Somali', callback_data: 'Somali' }, { text: 'Afar', callback_data: 'Afar' }],
+const userProfileFile = 'user_profiles.json'; 
+
+if (!fs.existsSync(userProfileFile)) {
+    fs.writeFileSync(userProfileFile, JSON.stringify({}, null, 2));
+}
+
+
+const userState = {};
+
+const createLanguageButtons = () => ({
+  reply_markup: {
+    inline_keyboard: [
+      [
+        { text: 'Amharic', callback_data: 'Amharic' },
+        { text: 'English', callback_data: 'English' },
       ],
-    },
-  };
+      [
+        { text: 'Oromifa', callback_data: 'Oromifa' },
+        { text: 'Arabic', callback_data: 'Arabic' },
+      ],
+      [
+        { text: 'Tigrinya', callback_data: 'Tigrinya' },
+        // { text: 'Sidama', callback_data: 'Sidama' },
+      ],
+      [
+        { text: 'Somali', callback_data: 'Somali' },
+        { text: 'Afar', callback_data: 'Afar' },
+      ],
+    ],
+  },
+});
+
+const translateMessage = async (text, from, to) => {
+  try {
+    const response = await axios.post(translationAPI, { from, to, text });
+    return response.data.translatedText;
+  } catch (error) {
+    console.error('Translation error:', error);
+    return 'Translation failed.';
+  }
 };
 
 // /start command
@@ -44,76 +77,76 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// /nowstart command
-bot.onText(/\/nowstart/, (msg) => {
+
+bot.onText(/\/nowstart/, async (msg) => {
   const chatId = msg.chat.id;
   const username = msg.from.username;
-  bot.sendMessage(
-    chatId,
-    `Okay, @${username}, please what language do you want to tell me to translate for you?`,
-    createLanguageButtons()
-  );
+
+  userState[msg.from.id] = { step: 'SELECT_LANGUAGE' };
+
+  const message = `Hello @${username}, please select a language to get started.`;
+  bot.sendMessage(chatId, message, createLanguageButtons());
 });
 
-// Handle language selection
-bot.on('callback_query', (query) => {
+bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
-  const language = query.data;
+  const selectedLanguage = query.data;
 
-  if (!userSelections[userId]) userSelections[userId] = {};
+  const user = userState[userId] || {};
+  const currentStep = user.step;
 
-  if (!userSelections[userId].fromLanguage) {
-    userSelections[userId].fromLanguage = languageCodeMap[language] || language;
-    bot.sendMessage(chatId, `You have selected ${language}. Now send a message in ${language}.`);
-  } else if (!userSelections[userId].toLanguage) {
-    userSelections[userId].toLanguage = languageCodeMap[language] || language;
+  if (currentStep === 'SELECT_LANGUAGE') {
+    userState[userId] = { selectedLanguage: selectedLanguage, step: 'AWAIT_MESSAGE' };
+    const translatedMessage = await translateMessage(
+      `You have selected ${selectedLanguage}. Now send a message in ${selectedLanguage}.`,
+      'en',
+      languageCodeMap[selectedLanguage]
+    );
+    bot.sendMessage(chatId, translatedMessage);
+  } else if (currentStep === 'AWAIT_TRANSLATION') {
+    const sourceLanguage = languageCodeMap[user.selectedLanguage];
+    const targetLanguage = languageCodeMap[selectedLanguage];
 
-    const { fromLanguage, message } = userSelections[userId];
-    axios
-      .post(translationAPI, {
-        from: fromLanguage,
-        to: userSelections[userId].toLanguage,
-        text: message,
-      })
-      .then((response) => {
-        const translatedText = response.data.translatedText;
-        bot.sendMessage(
-          chatId,
-          `Your original message in ${language}: '${message}' is now translated to ${language}.`
-        );
-        bot.sendMessage(chatId, `Your translated message is: '${translatedText}'`);
-        delete userSelections[userId];
-      })
-      .catch((err) => {
-        bot.sendMessage(chatId, 'Failed to translate the message. Please try again later.');
-        console.error(err);
-      });
+    const translatedMessage = await translateMessage(
+      user.lastMessage,
+      sourceLanguage,
+      targetLanguage
+    );
+
+    bot.sendMessage(
+      chatId,
+      ` ${selectedLanguage}: ${translatedMessage}`
+    );
+
+    userState[userId] = { step: 'AWAIT_MESSAGE', selectedLanguage: user.selectedLanguage };
   }
 });
 
-// Handle user message input
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
-  if (userSelections[userId] && userSelections[userId].fromLanguage && !userSelections[userId].message) {
-    userSelections[userId].message = msg.text;
-    bot.sendMessage(
-      chatId,
-      'Message received. Now select the language you want to translate your message to:',
-      createLanguageButtons()
+  const user = userState[userId] || {};
+
+  if (user.step === 'AWAIT_MESSAGE') {
+    userState[userId] = { ...user, lastMessage: msg.text, step: 'AWAIT_TRANSLATION' };
+
+    const translatedResponse = await translateMessage(
+      'What language do you want to translate your message to?',
+      'en',
+      languageCodeMap[user.selectedLanguage]
     );
+
+    bot.sendMessage(chatId, translatedResponse, createLanguageButtons());
   }
 });
 
 
 // /setfavorite command
-// Ensure the file exists
 if (!fs.existsSync(userProfileFile)) {
     fs.writeFileSync(userProfileFile, JSON.stringify({}, null, 2));
   }
-
 
   // /setfavorite Command
 bot.onText(/\/setfavorite/, (msg) => {
@@ -221,4 +254,3 @@ bot.on('photo', async (msg) => {
     console.error(err);
   }
 });
-

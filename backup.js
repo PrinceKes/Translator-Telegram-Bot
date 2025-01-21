@@ -47,7 +47,7 @@ const createLanguageButtons = () => ({
       ],
       [
         { text: 'Tigrinya', callback_data: 'Tigrinya' },
-        { text: 'Sidama', callback_data: 'Sidama' },
+        // { text: 'Sidama', callback_data: 'Sidama' },
       ],
       [
         { text: 'Somali', callback_data: 'Somali' },
