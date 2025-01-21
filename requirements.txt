@@ -1,0 +1,4 @@
+dotenv
+node-telegram-bot-api
+axios
+tesseract.js
