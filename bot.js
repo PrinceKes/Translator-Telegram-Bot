@@ -57,15 +57,39 @@ const createLanguageButtons = () => ({
   },
 });
 
+//const translateMessage = async (text, from, to) => {
+ // try {
+//    const response = await axios.post(translationAPI, { from, to, text });
+//    return response.data.translatedText;
+//  } catch (error) {
+//    console.error('Translation error:', error);
+ //   return 'Translation failed.';
+//  }
+//};
+
 const translateMessage = async (text, from, to) => {
   try {
-    const response = await axios.post(translationAPI, { from, to, text });
-    return response.data.translatedText;
+    // Split text into chunks (e.g., 500 characters per chunk)
+    const chunkSize = 500; // Adjust based on API limits
+    const chunks = text.match(new RegExp(`.{1,${chunkSize}}`, 'g'));
+
+    const translatedChunks = [];
+    for (const chunk of chunks) {
+      const response = await axios.post(translationAPI, { from, to, text: chunk });
+      translatedChunks.push(response.data.translatedText);
+    }
+
+    // Combine translated chunks into a single string
+    return translatedChunks.join(' ');
   } catch (error) {
     console.error('Translation error:', error);
     return 'Translation failed.';
   }
 };
+
+
+
+
 
 // /start command
 bot.onText(/\/start/, (msg) => {
